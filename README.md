@@ -511,17 +511,19 @@ Sensor readings may indicate a potential sensor fault when they satisfy the conf
 
 #### Pump Performance Degradation
 
-Changes in measured or derived pump operating behavior may indicate possible degradation.
+The detector reports a pump-specific alarm only when at least 10 consecutive good-quality flow readings from its sensor are below 75% of that pump's nominal flow. A concurrent multi-pump facility flow depression is reported as an aggregate proxy instead of separate unsupported pump diagnoses.
 
-#### Flow Residual Anomalies
+#### Facility Flow Depression Proxy
 
-Unexpected differences in flow measurements or simplified flow estimates may indicate leakage, blockage, sensor problems, or other inconsistencies.
+The generated leak scenario reduces inlet- and outlet-tagged pump flows together; it does not provide an independent paired flow balance. The detector flags sustained sub-nominal normalized flow across multiple facility pump sensors as a screening proxy only.
 
-A flow residual is not, by itself, proof of a leak or blockage.
+This proxy does not establish that a leak exists or identify its location.
 
 #### Blockage-Related Conditions
 
-Abnormal flow behavior may be investigated using the implemented rules and available measurements. The ability to distinguish a blockage from other causes depends on sensor coverage and the detection logic.
+At least 10 consecutive readings above 110% of the median of a pressure sensor's first 20 timestamp-ordered readings constitute a pressure anomaly. Pressure is measured at facility level in this dataset, so the alarm does not identify `PIPE-001` or prove a physical blockage.
+
+Sensor-fault alarms include both the sensor ID and its monitored component ID. Suspect-quality readings can trigger sensor-quality rules but are excluded from pump and facility process rules.
 
 ### Detection Thresholds
 
@@ -756,6 +758,14 @@ Their outputs should be interpreted as results of the implemented model, not pre
 The current project provides synthetic ground-truth artifacts intended to support systematic evaluation of anomaly detection.
 
 A complete evaluation should compare detector outputs with ground-truth scenarios without supplying the ground-truth labels as detector inputs.
+
+Run the current deterministic scenario screen with:
+
+```powershell
+python evaluate_scenarios.py
+```
+
+The evaluator checks alarm time-window overlap and documented target relationships. Pump and sensor targets can be exact matches; leak and pipe blockage results are labeled facility-level proxies. It lists unmatched alarms as unexpected. These are screening counts, not precision, recall, or F1 metrics.
 
 ### Recommended Metrics
 
