@@ -1,258 +1,264 @@
-# IndustrialPulse AI
-### Synthetic Industrial Monitoring, Anomaly Detection, Data Validation & Simulation
+﻿# IndustrialPulse AI
 
-IndustrialPulse AI is a Python-based industrial monitoring MVP designed to model industrial facilities, generate synthetic equipment telemetry, identify potential anomalies, validate equipment relationships, and simulate simplified operational changes.
+Synthetic industrial monitoring, data validation, rule-based anomaly detection, and reproducible simulation workflows for a local demo environment.
 
-The system models interconnected industrial components, including facilities, pumps, tanks, valves, pipes, and sensors. It combines deterministic synthetic data generation, explainable rule-based anomaly detection, structural validation, SQLite persistence, and a FastAPI application with a lightweight browser dashboard.
+Status: Prototype/demo implementation.
 
-> **Important:** IndustrialPulse AI is an educational and experimental synthetic engineering model. It is not a safety-certified industrial control system, a validated digital twin, or a replacement for professional industrial monitoring systems.
+Technology stack: Python, FastAPI, SQLite, Pandas, NumPy, NetworkX, pytest.
 
----
+Relevant project documentation:
+- [docs/architecture.md](docs/architecture.md)
+- [docs/data_dictionary.md](docs/data_dictionary.md)
+- [docs/simulation_assumptions.md](docs/simulation_assumptions.md)
+- [docs/ai_usage/ai_contribution_statement.md](docs/ai_usage/ai_contribution_statement.md)
 
-## Table of Contents
+## Executive Summary
 
-- [Project Overview](#project-overview)
-- [Key Features](#key-features)
-- [Technology Stack](#technology-stack)
-- [System Architecture](#system-architecture)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Installation and Setup](#installation-and-setup)
-- [Generating Synthetic Data](#generating-synthetic-data)
-- [Running the Application](#running-the-application)
-- [API Documentation](#api-documentation)
-- [Anomaly Detection](#anomaly-detection)
-- [Data Validation](#data-validation)
-- [Operational Simulation](#operational-simulation)
-- [Testing](#testing)
-- [Reproducibility](#reproducibility)
-- [Data Model](#data-model)
-- [Engineering Assumptions](#engineering-assumptions)
-- [Evaluation Strategy](#evaluation-strategy)
-- [Limitations and Future Improvements](#limitations-and-future-improvements)
-- [Responsible Use](#responsible-use)
+IndustrialPulse AI is a self-contained industrial monitoring MVP built around synthetic facility telemetry and explainable operational rules. The project models a small industrial environment with facilities, pumps, tanks, valves, pipes, and sensors; generates deterministic telemetry; validates structural relationships; applies transparent anomaly checks; and exposes the workflow through a FastAPI API and browser dashboard.
 
----
+The system is designed for demonstration, evaluation, and reproducible experimentation rather than live plant operations. It is intentionally narrow in scope: synthetic data, simplified modeling assumptions, and rule-based detection make it easy to reason about and validate without external dependencies or production infrastructure.
 
-## Project Overview
+Telemetry flows from a generator into CSV/JSON artifacts under `data/generated`, is validated against schema and relationship checks, and is then evaluated by the anomaly engine. Results are surfaced through the FastAPI app and persisted in SQLite as simulation runs and alarm records. A separate evaluation script compares detector output to ground-truth scenarios while keeping labels separate from the detection inputs.
 
-Industrial facilities contain interconnected equipment whose operating conditions change over time. Abnormal pressure, unexpected flow changes, degraded pump performance, and faulty sensors can indicate potential operational problems.
+A reviewer can run the project locally, generate telemetry, view the dashboard, submit a pump-speed simulation, and inspect the validation and anomaly outputs. The implementation is technically interesting because it combines synthetic equipment modeling, deterministic scenario injection, explainable detection rules, configuration hashing for traceability, and a local SQLite-backed workflow in a single Python application.
 
-IndustrialPulse AI explores how a lightweight monitoring platform can represent these components, generate synthetic operating data, and apply transparent detection rules to identify potential abnormalities.
+## Requirements-to-Implementation Status
 
-The project focuses on five areas:
+| Requirement | Implementation evidence | Status |
+|---|---|---|
+| Industrial asset modeling | `app/generator.py` creates facilities, pumps, tanks, valves, pipes, sensors, operating modes, and telemetry records | Implemented |
+| Synthetic telemetry generation | `generate_dataset()` produces deterministic CSV/JSON outputs under `data/generated` | Implemented |
+| Structural validation | `app/validation.py` checks primary keys, foreign keys, pipe endpoints, tank capacity constraints, and telemetry validity | Implemented |
+| Explainable rule-based anomaly detection | `app/engine.py` implements sensor-fault, pump-degradation, pressure-anomaly, and proxy leak checks | Implemented |
+| Simulation execution | `app/main.py` exposes `/api/simulations` and stores configuration hash, seed, and output JSON | Implemented |
+| Local persistence | SQLite tables `simulation_runs` and `alarms` are created in `industrialpulse.db` | Implemented |
+| Browser dashboard | Root route returns an HTML dashboard with summary, telemetry, alarms, and simulation history | Implemented |
+| Scenario evaluation | `evaluate_scenarios.py` loads `ground_truth.json` and matches alarms to labeled windows | Implemented |
+| Reproducibility | `scripts/reproducibility_check.py` compares digests across generated runs with the same seed and telemetry count | Implemented |
+| Production-safe industrial use | Documented limitations and synthetic-only assumptions in docs and README | Implemented |
 
-1. **Industrial asset modeling:** Represent facilities and their associated equipment.
-2. **Synthetic telemetry generation:** Generate repeatable equipment readings for development and testing.
-3. **Anomaly detection:** Apply interpretable rules to identify potential equipment and sensor abnormalities.
-4. **Data validation:** Check structural relationships and selected engineering constraints.
-5. **Operational simulation:** Explore simplified equipment operating changes and persist simulation records.
+## Key Capabilities
 
-The application exposes its functionality through a FastAPI backend and provides a browser-based interface for interacting with the system.
+- Synthetic facility and equipment generation with stable IDs and deterministic seed control.
+- Data validation for entity integrity, foreign keys, pipe endpoints, and tank capacity rules.
+- Explainable anomaly detection for sensor freezes, negative physical readings, sustained high pressure, pump degradation, and flow-depression proxy scenarios.
+- Simulation execution using a simplified pump-affinity-law estimate for speed changes.
+- SQLite-backed persistence for alarm and simulation history.
+- Browser dashboard and REST API for summary, telemetry, alarm, and simulation views.
+- Scenario evaluation against separately stored ground-truth labels.
+- Repeatable generation and reproducibility checks using a fixed seed.
 
-## Key Features
+## Architecture Overview
 
-### 1. Industrial Asset Modeling
+```mermaid
+flowchart LR
+    A[generate_data.py / app.generator.generate_dataset] --> B[data/generated CSV + JSON artifacts]
+    B --> C[validate_dataset]
+    B --> D[detect_anomalies]
+    B --> E[FastAPI app /app/main.py]
+    C --> E
+    D --> F[(SQLite industrialpulse.db)]
+    E --> G[Dashboard / browser UI]
+    E --> H[REST API endpoints]
+    H --> I[Simulation history + alarms]
+    J[evaluate_scenarios.py] -. loads ground_truth.json .-> B
+    J -. compares alarm windows to injected scenarios .-> D
 
-The synthetic environment includes:
-
-- Facilities
-- Pumps
-- Tanks
-- Valves
-- Pipes
-- Sensors
-- Operating modes
-- Telemetry records
-- Alarms
-- Simulation runs
-
-Equipment relationships are represented through identifiers and pipe connections.
-
-### 2. Deterministic Synthetic Data Generation
-
-The generator supports seeded data generation so that the same configuration can be used for repeatable development and testing.
-
-The default full-data workflow generates 100,000 telemetry records.
-
-Example:
-
-```powershell
-python generate_data.py --telemetry 100000 --seed 20261022
+    classDef process fill:#0f172a,stroke:#5eead4,color:#e2e8f0;
+    class A,B,C,D,E,F,G,H,I,J process;
 ```
 
-The generated dataset is stored locally under `data/generated/`.
+The production/application workflow is intentionally local and synchronous: the data is generated, validated, processed, and served by the same Python app. The evaluation workflow is separate: `evaluate_scenarios.py` loads the synthetic ground-truth labels and compares alarm time windows to expected issue windows without using those labels as detection features.
 
-### 3. Explainable Anomaly Detection
+End-to-end flow:
 
-The detection engine uses configurable, rule-based checks to identify potential issues, including:
+1. The generator creates facility and equipment tables plus telemetry in `data/generated`.
+2. `validate_dataset()` checks data integrity and relationship rules before the data is used downstream.
+3. The detection engine inspects telemetry for process and sensor anomalies using explicit thresholds and deterministic logic.
+4. The FastAPI app exposes summary, telemetry, alarms, and simulation endpoints and serves the browser dashboard.
+5. Simulation requests are validated, a simplified affinity-law estimate is produced, and the run is stored with a `configuration_hash`.
+6. Historical alarm and simulation records are persisted in SQLite for retrieval and review.
+7. The evaluator compares detector outputs against separate ground-truth scenario labels to assess coverage and alignment.
 
-- Sensor faults
-- Pump performance degradation
-- Abnormal flow residuals that may indicate leakage or other flow inconsistencies
-- Potential blockage-related conditions, where supported by the implemented rules
+## High-Level Design (HLD)
 
-Detection thresholds are defined in the application code.
+### System boundaries and responsibilities
 
-These rules are intended to be understandable and inspectable rather than opaque predictions from a machine-learning model.
+The repository is organized into a small, local application rather than a multi-service system. The responsibilities are split by module:
 
-### 4. Structural Data Validation
+- `app/generator.py` creates deterministic synthetic data and scenario windows.
+- `app/validation.py` enforces integrity rules and basic engineering consistency checks.
+- `app/engine.py` contains the rule engine for sensor and process anomaly detection.
+- `app/main.py` hosts the FastAPI service, dashboard, and database writes.
+- `evaluate_scenarios.py` performs separate evaluation against the stored scenario labels.
+- `scripts/reproducibility_check.py` verifies deterministic generation for a fixed seed.
 
-The validation module checks selected properties of the generated industrial environment, including:
+### Request and processing lifecycle
 
-- Equipment identifiers and relationships
-- Pipe endpoint references
-- Selected tank capacity and level constraints
-- Basic consistency between modeled components
+A typical request begins at the browser or API client, reaches `app/main.py`, and may trigger dataset generation and validation. For telemetry retrieval, the CSV file is read and returned; for alarm generation, the current dataset is sent through `detect_anomalies()`. For simulations, a pump ID and target speed percentage are accepted, the nominal performance is used to estimate a new flow and head, the run is stored in SQLite, and the result is returned as JSON.
 
-The exact guarantees are limited to the checks implemented in the validation module.
+### Data persistence and historical records
 
-### 5. Operational Simulation
+The local persistence is intentionally minimal. `industrialpulse.db` contains two main tables used by the demo application:
 
-The application provides a simulation API for submitting equipment operating changes.
+- `simulation_runs`: run ID, facility ID, raw configuration JSON, `configuration_hash`, seed, status, timestamps, and output JSON.
+- `alarms`: alarm metadata such as component ID, alarm type, severity, rule ID, explanation, and creation timestamp.
 
-For example, a request can specify a pump and a target speed. The application can then process the request according to its implemented simulation logic and persist a simulation record.
+These tables are append-only within the local prototype and support historical review in the dashboard.
 
-The simulation is simplified and should not be interpreted as a full hydraulic-network calculation.
+### Configuration traceability
 
-### 6. API and Dashboard
+Each simulation stores the configuration as JSON and computes a SHA-256 `configuration_hash` over the serialized config. This makes it possible to trace which configuration produced a given run and compare distinct input states.
 
-The FastAPI application provides HTTP endpoints for retrieving summary information, telemetry, alarms, and simulation records.
+### Validation and error-handling strategy
 
-A lightweight browser dashboard is available for inspecting the application.
+Validation is explicit and deterministic. Before using telemetry or simulation inputs, the app checks required columns, data types, key integrity, and facility references. Invalid or unknown pump IDs raise HTTP 404 errors, and the validator returns `{"valid": ..., "errors": ...}` for dataset checks. The implementation is not a full distributed validation framework, but it enforces the relevant integrity checks for the demo workflow.
 
-### 7. Automated Testing
+### Separation of evaluation and detection
 
-Pytest is used to test selected aspects of the project.
+The ground-truth labels are kept outside the detector’s primary input path. This is intentional: `ground_truth.json` is generated as a separate evaluation artifact, not as a feature used during inference. This reduces leakage risk and keeps the detector logic explainable and testable.
 
-The current test suite covers basic dataset generation, ground-truth separation, and an anomaly-detection rule.
+### Key design trade-offs
 
-Passing these tests does not establish that all anomaly types or simulation behaviors have been validated.
+- Synthetic telemetry yields reproducibility and fast iteration, but it cannot represent real plant behavior.
+- Rule-based detection is interpretable and easy to audit, but it is not a general ML classifier.
+- SQLite keeps the project easy to run locally, but it is not a production-grade distributed database.
+- The simulation model is intentionally simplified to prioritize understanding and traceability over hydraulic fidelity.
 
----
+For a more detailed explanation of the intended architecture, see [docs/architecture.md](docs/architecture.md).
 
-## Technology Stack
+## Data Model
 
-| Technology | Purpose |
-|---|---|
-| Python | Application logic and data generation |
-| FastAPI | HTTP API |
-| Uvicorn | ASGI application server |
-| SQLite | Local persistence for supported application records |
-| Pandas | Tabular data handling, where used by the implementation |
-| Pytest | Automated testing |
-| CSV and JSON | Synthetic data and metadata storage |
+The application maintains a compact synthetic industrial data model centered on facility assets and telemetry. Stable IDs are string-based and prefixed for deterministic entity naming.
 
-The application is designed as a lightweight MVP that can run locally without requiring a cloud deployment.
+| Entity | Key fields | Relationship and notes |
+|---|---|---|
+| `facilities.csv` | `facility_id`, `name`, `status` | Root organizational unit for plant assets |
+| `pumps.csv` | `pump_id`, `facility_id`, `nominal_flow_lps`, `shutoff_head_kpa`, `curve_k` | Facility-owned rotating equipment |
+| `tanks.csv` | `tank_id`, `facility_id`, `capacity_liters`, `initial_volume_liters` | Storage asset with established capacity constraints |
+| `valves.csv` | `valve_id`, `facility_id`, `opening_pct`, `state` | Control element within a facility |
+| `pipes.csv` | `pipe_id`, `facility_id`, `from_node_id`, `to_node_id`, `diameter_mm`, `length_m` | Directed pipe links between valid nodes |
+| `sensors.csv` | `sensor_id`, `facility_id`, `component_id`, `sensor_type`, `measurement_role` | Instrument metadata; one primary monitored component per sensor |
+| `telemetry.csv` | `telemetry_id`, `sensor_id`, `timestamp`, `value`, `quality_status` | Time-series stream for each sensor |
+| `operating_modes.csv` | `operating_mode_id`, `facility_id`, `mode_name`, `effective_from` | Operational mode metadata |
+| `ground_truth.json` | scenario records with `issue_type`, `component_id`, windows | Separate evaluation labels; not a detector input |
+| `simulation_runs` | `simulation_run_id`, `configuration_hash` | Persisted simulation attempts and output JSON |
+| `alarms` | `alarm_id`, `rule_id`, `alarm_type`, `severity` | Event history generated by detection rules |
 
----
+Important identifier semantics:
 
-## System Architecture
+- `sensor_id` identifies the measuring instrument.
+- `component_id` identifies the asset or facility the sensor monitors.
+- A sensor-fault alarm therefore includes both the sensor and the monitored component when applicable.
+- `ground_truth.json` uses legacy `component_id` semantics that depend on `issue_type`; this is documented in [docs/data_dictionary.md](docs/data_dictionary.md).
 
-The system is organized into several logical components.
+See [docs/data_dictionary.md](docs/data_dictionary.md) for full schema details and the documented relationship semantics.
 
-```text
-                Synthetic Data Generator
-                          |
-                          v
-                 Industrial Data Files
-                   CSV / JSON
-                          |
-             +------------+------------+
-             |                         |
-             v                         v
-      Data Validation          Anomaly Detection
-             |                         |
-             +------------+------------+
-                          |
-                          v
-                   FastAPI Backend
-                          |
-             +------------+------------+
-             |                         |
-             v                         v
-       Browser Dashboard        SQLite Persistence
-             |                         |
-             +------------+------------+
-                          |
-                          v
-               Summary and API Results
-```
+## Detection and Simulation Methodology
 
-### Component Responsibilities
+### Detection rules
 
-**Data generator — `app/generator.py`**
+The detector in `app/engine.py` is intentionally rule-based and explainable. It does not rely on a trained model. The implemented checks include:
 
-Creates synthetic industrial entities, relationships, telemetry, and scenario-related artifacts.
+- `SENSOR_STUCK_VALUE`: repeated identical readings over a sustained window signal a likely frozen or stuck sensor.
+- `NEGATIVE_PHYSICAL_READING`: negative values for flow, pressure, or level data are treated as non-physical.
+- `SUSTAINED_HIGH_PRESSURE`: for a pressure sensor, a sustained run above 110% of the median of the first 20 timestamp-ordered readings triggers a pressure anomaly.
+- `PUMP_PERFORMANCE_RATIO`: pump flow below 75% of the pump's nominal flow for at least 10 good readings indicates performance degradation.
+- `FACILITY_FLOW_DEPRESSION_PROXY`: a multi-sensor facility-level depression is treated as a leak proxy rather than proof of a leak event.
 
-**Anomaly engine — `app/engine.py`**
+These rules are parameterized in code and are meant to be auditable and calibrated, not treated as universal industrial standards.
 
-Applies implemented detection rules to identify potential abnormal conditions.
+### Simulation methodology
 
-**Validation module — `app/validation.py`**
+The simulation endpoint accepts a `pump_id` and `speed_pct`. It uses a simplified affinity-law estimate:
 
-Checks selected structural and engineering constraints.
+- `Q2 / Q1 ≈ N2 / N1`
+- `H2 / H1 ≈ (N2 / N1)^2`
 
-**Application API — `app/main.py`**
+The app then predicts new flow and head from the pump nominal values and stores the result with the run metadata. This is a compact engineering approximation for demonstration purposes, not a hydraulic network solver or a validated plant model.
 
-Exposes application functionality through FastAPI, manages supported persistence operations, and serves the browser interface.
+### Ground truth and evaluation
 
-**Automated tests — `tests/test_core.py`**
+`ground_truth.json` contains deterministic injected scenario windows for the synthetic benchmark: pump degradation, sensor faults, leak-like flow suppression, and blockage-like pressure behavior. These labels are used only by `evaluate_scenarios.py` to compare detector outputs against expected issue windows. The detector itself never consumes those labels.
 
-Exercises selected generation, data separation, and anomaly-detection behavior.
+### Scope and limitations
 
-**Reproducibility utility — `scripts/reproducibility_check.py`**
+The rules are valid only within the synthetic environment and the assumptions documented in [docs/simulation_assumptions.md](docs/simulation_assumptions.md). They do not establish causal proof of a physical process fault, and they cannot substitute for safety-reviewed process diagnostics or expert engineering judgment.
 
-Provides a utility for checking reproducibility. Its behavior should be verified using the command shown in the testing section.
+## Technology Stack and Design Rationale
 
----
+| Component | Technology | Purpose | Reason for selection |
+|---|---|---|---|
+| Application logic | Python | Core generation, validation, detection, and simulation logic | Fast iteration and strong data-science ecosystem |
+| HTTP API | FastAPI | Exposes summary, telemetry, alarm, and simulation endpoints | Lightweight, modern Python web API |
+| Local persistence | SQLite | Stores simulation runs and alarm history | Self-contained, simple local deployment |
+| Data processing | Pandas + NumPy | Telemetry shaping, filtering, and transformation | Familiar and efficient for tabular time-series workflow |
+| Graph relationship logic | NetworkX | Pipe and topology-related processing support | Useful for structural relationship checks |
+| Browser UI | HTML + JavaScript | Demonstrates dashboard interactions for summary and simulation results | Simple, dependency-free front-end |
+| Testing | pytest | Validates generation, detector behavior, and scenario checks | Standard Python testing workflow |
+| Reproducibility | hashlib + deterministic seed generation | Compares generated artifacts across runs | Supports repeatable synthetic experiments |
 
-## Project Structure
+The design intentionally favors transparency and reproducibility over production scale. This is a prototype that demonstrates how a synthetic monitoring stack can be built and evaluated locally.
 
-The main repository structure is expected to resemble the following:
+## Repository Structure
 
 ```text
 IndustrialPulse-AI/
 ├── app/
 │   ├── __init__.py
-│   ├── generator.py
 │   ├── engine.py
-│   ├── validation.py
-│   └── main.py
-├── tests/
-│   └── test_core.py
-├── scripts/
-│   └── reproducibility_check.py
+│   ├── generator.py
+│   ├── main.py
+│   └── validation.py
+├── data/
+│   └── generated/
+│       ├── facilities.csv
+│       ├── ground_truth.json
+│       ├── negative_cases.json
+│       ├── operating_modes.csv
+│       ├── pipes.csv
+│       ├── pumps.csv
+│       ├── sensors.csv
+│       ├── source_manifest.json
+│       ├── tanks.csv
+│       ├── telemetry.csv
+│       └── valves.csv
 ├── docs/
 │   ├── architecture.md
 │   ├── data_dictionary.md
-│   └── simulation_assumptions.md
-├── generate_data.py
-├── requirements.txt
-├── pytest.ini
+│   ├── simulation_assumptions.md
+│   └── ai_usage/
+│       ├── ai_contribution_statement.md
+│       └── prompt_history.md
+├── scripts/
+│   └── reproducibility_check.py
+├── tests/
+│   └── test_core.py
 ├── .gitignore
-└── README.md
+├── README.md
+├── evaluate_scenarios.py
+├── generate_data.py
+├── industrialpulse.db
+├── pytest.ini
+└── requirements.txt
 ```
 
-The exact files in the repository may vary as the project evolves.
+Key repository elements:
 
-Generated data is excluded from Git by the current `.gitignore` configuration. It is created locally when the generator runs.
+- `app/` holds the core application logic.
+- `data/generated/` contains the generated baseline telemetry and metadata used by the project.
+- `docs/` stores the architecture, schema, assumptions, and AI usage records.
+- `tests/` contains the current validation suite for generation and detection behavior.
+- `scripts/` contains the reproducibility checker.
+- `evaluate_scenarios.py` is the separate evaluation workflow.
 
----
+## Installation and Local Setup
 
-## Requirements
+### Prerequisites
 
-- Python 3.10 or later
-- pip
-- Git, if cloning the repository
-- A terminal such as Windows PowerShell
-- A modern web browser
-
-The application is intended to run locally on Windows, Linux, or macOS, subject to dependency compatibility.
-
----
-
-## Installation and Setup
+- Python 3.10+
+- `pip`
+- A working terminal (PowerShell, Bash, or zsh)
 
 ### 1. Clone the repository
 
@@ -263,31 +269,14 @@ cd IndustrialPulse-AI
 
 ### 2. Create a virtual environment
 
-**Windows PowerShell:**
+On Windows PowerShell:
 
 ```powershell
 python -m venv .venv
-```
-
-Activate it:
-
-```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks activation, you can temporarily allow local activation scripts in the current terminal session:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-```
-
-Then activate the environment again:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-**Linux or macOS:**
+On macOS/Linux:
 
 ```bash
 python3 -m venv .venv
@@ -296,584 +285,111 @@ source .venv/bin/activate
 
 ### 3. Install dependencies
 
-With the virtual environment activated, run:
-
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-### 4. Generate the dataset
-
-Generate a smaller dataset first to check that the generator runs:
+### 4. Generate baseline data
 
 ```bash
 python generate_data.py --telemetry 2000 --seed 20261022
 ```
 
-For the full synthetic dataset, run:
+For the project’s full synthetic dataset:
 
 ```bash
 python generate_data.py --telemetry 100000 --seed 20261022
 ```
-
-The generated files should appear under:
-
-```text
-data/generated/
-```
-
-Because generated files are ignored by Git, each developer should generate the required data locally.
-
----
-
-## Generating Synthetic Data
-
-The generator creates a synthetic industrial environment with interconnected equipment and telemetry records.
-
-The current 100,000-record configuration has produced the following dataset counts:
-
-| Entity | Count |
-|---|---:|
-| Facilities | 3 |
-| Pumps | 20 |
-| Tanks | 30 |
-| Valves | 60 |
-| Pipes | 107 |
-| Sensors | 53 |
-| Telemetry records | 100,000 |
-
-These counts describe the generated dataset configuration used during development. They are not measurements from a real industrial facility.
-
-### Seeded Generation
-
-The `--seed` argument controls the random seed used by the generator.
-
-Example:
-
-```bash
-python generate_data.py --telemetry 100000 --seed 20261022
-```
-
-For reproducible results, use the same seed, telemetry count, software dependencies, and generation configuration.
-
-Reproducibility should be verified against the generated outputs rather than assumed solely from using a fixed seed.
-
-### Generated Artifacts
-
-The generator creates synthetic data files under `data/generated/`.
-
-Depending on the generation configuration, these artifacts include:
-
-- Industrial component tables
-- Telemetry records
-- Ground-truth scenario records
-- Negative test cases
-- Source or generation metadata
-
-Ground-truth artifacts are intended for evaluation and testing. They should remain separate from the features supplied to anomaly-detection functions to reduce the risk of data leakage.
-
----
 
 ## Running the Application
 
-Make sure the virtual environment is activated and the dependencies are installed.
-
-Start the application from the repository root:
+Start the backend from the repository root:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-When the server starts successfully, the application should be available at the following local addresses.
+Then open:
 
-### Browser Dashboard
+- Dashboard: `http://127.0.0.1:8000`
+- API docs: `http://127.0.0.1:8000/docs`
+- OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
 
-http://127.0.0.1:8000
+The application will create `data/generated` artifacts automatically when needed and will initialize SQLite tables on first use.
 
-### Interactive API Documentation
+## API Surface
 
-http://127.0.0.1:8000/docs
+The app exposes several operational endpoints:
 
-### OpenAPI Schema
+- `GET /api/summary`: dataset counts and validation result
+- `GET /api/telemetry?limit=100`: sample telemetry records
+- `GET /api/alarms`: current alert history
+- `POST /api/simulations`: run a simulation with a `pump_id` and `speed_pct`
+- `GET /api/simulations`: list persisted simulation runs
+- `/`: browser dashboard
 
-http://127.0.0.1:8000/openapi.json
-
-The server must remain running while you use these local addresses.
-
-The `--reload` option is intended for development, not production deployment.
-
----
-
-## API Documentation
-
-The application exposes the following documented endpoints.
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/api/summary` | Retrieve dataset and application summary information |
-| GET | `/api/alarms` | Retrieve available alarm records |
-| GET | `/api/telemetry?limit=100` | Retrieve a limited set of telemetry records |
-| POST | `/api/simulations` | Submit an equipment simulation request |
-| GET | `/api/simulations` | Retrieve available simulation records |
-
-Use the interactive API documentation at `/docs` to inspect request schemas, execute requests, and review responses.
-
-### Example: Retrieve the Summary
-
-Send a GET request to:
-
-```text
-http://127.0.0.1:8000/api/summary
-```
-
-A successful response includes information about the dataset, validation results, and available application records.
-
-Example structure:
-
-```json
-{
-  "counts": {
-    "facilities": 3,
-    "pumps": 20,
-    "tanks": 30,
-    "valves": 60,
-    "pipes": 107,
-    "sensors": 53,
-    "telemetry": 100000,
-    "active_alarms": 0,
-    "simulation_runs": 0
-  },
-  "validation": {
-    "valid": true,
-    "errors": []
-  }
-}
-```
-
-The exact response depends on the current local dataset and application state. The example is illustrative.
-
-### Example: Retrieve Telemetry
-
-Send a GET request to:
-
-```text
-http://127.0.0.1:8000/api/telemetry?limit=100
-```
-
-The endpoint returns a limited set of telemetry records according to the implemented response schema.
-
-### Example: Retrieve Alarms
-
-Send a GET request to:
-
-```text
-http://127.0.0.1:8000/api/alarms
-```
-
-The response contains available alarm records. An empty result does not necessarily indicate a malfunction; it may mean that no alarms have been generated or persisted.
-
-### Example: Submit a Simulation
-
-Send a POST request to:
-
-```text
-http://127.0.0.1:8000/api/simulations
-```
-
-Example request body:
+Example simulation payload:
 
 ```json
 {
   "pump_id": "PUMP-001",
-  "speed_pct": 80
+  "speed_pct": 80,
+  "seed": 20261022
 }
 ```
 
-This example assumes that `PUMP-001` exists in the generated dataset and that the request matches the API's expected schema.
+## Validation and Verification
 
-Use `/docs` to confirm the current request fields and response structure.
-
----
-
-## Anomaly Detection
-
-IndustrialPulse AI includes a rule-based anomaly-detection engine.
-
-Rule-based detection is used because its decisions can be inspected and explained. Rather than relying on an opaque model, the application applies defined checks to selected telemetry and operational conditions.
-
-### Detection Categories
-
-The project is designed to investigate the following types of abnormalities.
-
-#### Sensor Faults
-
-Sensor readings may indicate a potential sensor fault when they satisfy the configured conditions implemented in the detection engine.
-
-#### Pump Performance Degradation
-
-The detector reports a pump-specific alarm only when at least 10 consecutive good-quality flow readings from its sensor are below 75% of that pump's nominal flow. A concurrent multi-pump facility flow depression is reported as an aggregate proxy instead of separate unsupported pump diagnoses.
-
-#### Facility Flow Depression Proxy
-
-The generated leak scenario reduces inlet- and outlet-tagged pump flows together; it does not provide an independent paired flow balance. The detector flags sustained sub-nominal normalized flow across multiple facility pump sensors as a screening proxy only.
-
-This proxy does not establish that a leak exists or identify its location.
-
-#### Blockage-Related Conditions
-
-At least 10 consecutive readings above 110% of the median of a pressure sensor's first 20 timestamp-ordered readings constitute a pressure anomaly. Pressure is measured at facility level in this dataset, so the alarm does not identify `PIPE-001` or prove a physical blockage.
-
-Sensor-fault alarms include both the sensor ID and its monitored component ID. Suspect-quality readings can trigger sensor-quality rules but are excluded from pump and facility process rules.
-
-### Detection Thresholds
-
-Detection thresholds are implemented as configurable constants in `app/engine.py`.
-
-These thresholds are illustrative. They have not been established as universally valid industrial operating limits.
-
-### Important Distinction
-
-The presence of a fault scenario in the synthetic dataset does not guarantee that the anomaly detector will identify it.
-
-Detection coverage, false positives, false negatives, and detection timing must be measured through testing.
-
----
-
-## Data Validation
-
-The validation module checks selected properties of the synthetic industrial environment.
-
-The validation checks include supported constraints involving:
-
-- Equipment identifiers
-- Component relationships
-- Pipe endpoint references
-- Tank capacity and level conditions
-- Basic consistency of generated records
-
-A validation response such as:
-
-```json
-{
-  "valid": true,
-  "errors": []
-}
-```
-
-indicates that the checks implemented by the current validator did not report errors for the data it examined.
-
-It does not establish that the model is physically accurate or that every possible data-integrity issue has been ruled out.
-
-### Negative Test Cases
-
-Deliberately invalid cases are kept separate from the baseline generated dataset.
-
-Examples include invalid tank-level conditions and invalid pipe references, where produced by the generator.
-
-Keeping negative cases separate allows invalid inputs to be used for testing without silently contaminating the normal baseline dataset.
-
----
-
-## Operational Simulation
-
-The project exposes a simulation API for evaluating simplified changes to equipment operating conditions.
-
-A simulation request can specify a pump and a target speed.
-
-Example:
-
-```json
-{
-  "pump_id": "PUMP-001",
-  "speed_pct": 80
-}
-```
-
-The API uses the implemented simulation logic to process the request and store supported simulation records.
-
-### Simulation Scope
-
-The current implementation is a simplified scenario model. It is not a full hydraulic-network solver.
-
-The simulation should not be assumed to capture all interactions among:
-
-- Pump curves
-- Pipe friction
-- Valve characteristics
-- Fluid properties
-- Tank levels
-- Network pressure
-- Transient operating behavior
-
-Any outputs must be interpreted in the context of the model's assumptions and implemented calculations.
-
----
-
-## Testing
-
-Run tests from the repository root with the virtual environment activated:
+### Automated tests
 
 ```bash
 python -m pytest -q
 ```
 
-### Current Test Coverage
+The current suite validates:
 
-The automated suite covers selected behavior, including:
+- dataset generation counts and relationships
+- separate ground-truth storage from detector inputs
+- stuck-sensor detection
+- pump degradation detection
+- negative physical reading detection
+- facility-level leak proxy detection
+- sustained high pressure detection
 
-- Synthetic dataset generation and data relationships
-- Separation of ground-truth artifacts from detector features
-- Sensor-fault, pump-degradation, negative-reading, facility-flow-proxy, and sustained-pressure rules
-- Exclusion of suspect readings from process alarms
-- Malformed telemetry handling
-- Exact sensor-target and facility-proxy scenario matching
+As of the repository state checked here, the suite passes:
 
-### Additional Recommended Tests
+- `12 passed` (with one dependency warning from pytest on this environment)
 
-Further tests should cover:
+### Scenario evaluation
 
-- Invalid equipment references
-- Invalid tank-level conditions
-- Invalid simulation requests
-- Valid simulation requests
-- Database persistence
-- Boundary values for telemetry and simulation inputs
+```bash
+python evaluate_scenarios.py
+```
 
-The project should not be considered fully validated until the additional relevant behaviors have been tested.
+This script compares alarm windows to injected ground-truth issue windows and reports exact and facility-level proxy matches. It is a tool for evaluation and traceability, not a production-vetted score card.
 
----
-
-## Reproducibility
-
-Reproducibility is important when evaluating synthetic data and anomaly-detection behavior.
-
-The project includes a reproducibility-checking utility:
+### Reproducibility check
 
 ```bash
 python scripts/reproducibility_check.py --telemetry 1000
 ```
 
-This command should be used to verify the behavior implemented by the utility in the current revision.
-
-For a reproducibility assessment, compare the generated outputs using the same:
-
-- Random seed
-- Telemetry count
-- Generator version
-- Dependency versions
-- Configuration
-- Input files, where applicable
-
-A fixed random seed alone does not guarantee byte-for-byte identical output if other generation settings, software versions, or output ordering change.
-
----
-
-## Data Model
-
-The synthetic environment contains the following primary entities.
-
-| Entity | Primary Key | Key Relationships | Important Units |
-|---|---|---|---|
-| Facility | `facility_id` | Parent of associated equipment | — |
-| Pump | `pump_id` | References a facility | Flow: L/s; pressure: kPa |
-| Tank | `tank_id` | References a facility | Volume: L |
-| Valve | `valve_id` | References a facility | Opening: % |
-| Pipe | `pipe_id` | References a facility and endpoint nodes | Diameter: mm; length: m |
-| Sensor | `sensor_id` | References a facility and component | Depends on sensor type |
-| Telemetry | `telemetry_id` | References a sensor | Depends on measurement type |
-| OperatingMode | `operating_mode_id` | References a facility | Effective timestamps: UTC |
-| Alarm | `alarm_id` | May reference a simulation run | Severity depends on schema |
-| SimulationRun | `simulation_run_id` | References a facility | Seed and configuration metadata |
-
-These entities form a simplified synthetic representation of industrial equipment and its operating data.
-
----
-
-## Engineering Assumptions
-
-### Units
-
-The synthetic model uses the following units:
-
-- Flow: liters per second (L/s)
-- Pressure: kilopascals (kPa)
-- Tank volume: liters (L)
-- Pipe diameter: millimeters (mm)
-- Pipe length: meters (m)
-- Valve opening: percentage
-
-These units are model conventions and should be checked before incorporating any external data.
-
-### Directed Topology
-
-The synthetic topology represents pipe connections as a directed graph.
-
-Pipe endpoints are expected to reference valid component nodes in the node registry used by the application.
-
-### Simplified Pump Curve
-
-The documented pump approximation is:
-
-```text
-head = shutoff_head_kpa - curve_k * flow_lps**2
-```
-
-This is a simplified relationship used for modeling purposes. It is not a substitute for a manufacturer-provided pump curve or a validated hydraulic model.
-
-### Tank Balance
-
-The simplified tank-volume balance is:
-
-```text
-volume[t+1] = volume[t] + (inflow - outflow) * dt_seconds
-```
-
-The relationship assumes compatible flow and time units and must be constrained by the tank's physical limits.
-
-### Detection Thresholds
-
-Thresholds are configurable constants in the detection engine.
-
-They should be calibrated and validated against representative operating data before any real-world use.
-
-### Simulation Assumptions
-
-Simulations are simplified scenario comparisons rather than full hydraulic-network solutions.
-
-Their outputs should be interpreted as results of the implemented model, not predictions guaranteed to match real industrial equipment.
-
----
-
-## Evaluation Strategy
-
-The current project provides synthetic ground-truth artifacts intended to support systematic evaluation of anomaly detection.
-
-A complete evaluation should compare detector outputs with ground-truth scenarios without supplying the ground-truth labels as detector inputs.
-
-Run the current deterministic scenario screen with:
-
-```powershell
-python evaluate_scenarios.py
-```
-
-The evaluator checks alarm time-window overlap and documented target relationships. Pump and sensor targets can be exact matches; leak and pipe blockage results are labeled facility-level proxies. It lists unmatched alarms as unexpected. These are screening counts, not precision, recall, or F1 metrics.
-
-### Recommended Metrics
-
-**Precision**
-
-The proportion of detected anomalies that correspond to ground-truth anomalies under the chosen matching rules.
-
-**Recall**
-
-The proportion of ground-truth anomalies detected by the system.
-
-**F1 Score**
-
-The harmonic mean of precision and recall.
-
-**False-Positive Rate**
-
-The frequency with which normal conditions are incorrectly classified as anomalous, using a clearly defined denominator.
-
-**Detection Delay**
-
-The elapsed time between the beginning of a ground-truth scenario and the first qualifying detection.
-
-**Scenario-Level Detection Rate**
-
-The proportion of injected scenarios detected within their expected evaluation windows.
-
-### Evaluation Considerations
-
-Evaluation should define:
-
-- What constitutes an anomaly
-- How detections are matched to ground-truth scenarios
-- The time window used for matching
-- How repeated alarms are handled
-- How normal operating conditions are sampled
-- How multiple detections for the same scenario are counted
-
-Metrics should be reported only after the evaluation has actually been implemented and executed.
-
-No detection-accuracy percentage is claimed in this README.
-
----
-
-## Limitations and Future Improvements
-
-IndustrialPulse AI is an MVP. The following limitations should be considered.
-
-### Current Limitations
-
-- The dataset is synthetic and does not establish real-world detection performance.
-- Detection rules use illustrative thresholds.
-- Flow residuals are approximate and depend on available sensor measurements and storage changes.
-- Similar symptoms may have different causes, limiting fault identification.
-- The simulation model does not solve the full hydraulic network.
-- Validation covers only the constraints implemented in the validator.
-- Automated tests cover only selected behaviors.
-- No measured precision, recall, F1 score, or detection-delay benchmark is claimed here.
-- The browser dashboard is intentionally lightweight.
-- The application is not intended for safety-critical operational control.
-
-### Future Improvements
-
-Potential extensions include:
-
-1. Add comprehensive scenario-level anomaly evaluation.
-2. Measure precision, recall, F1 score, and detection delay.
-3. Improve physical consistency in synthetic telemetry generation.
-4. Expand mass-balance and network-consistency validation.
-5. Add tests for all injected fault scenarios.
-6. Improve simulation behavior and validate its assumptions.
-7. Add richer alarm history and equipment-level visualizations.
-8. Introduce structured logging and clearer error responses.
-9. Improve dataset provenance and reproducibility checks.
-10. Add configurable operating thresholds and scenario parameters.
-11. Benchmark larger datasets and optimize data access.
-12. Validate model assumptions against appropriate engineering references and real data, where available.
-
----
+This confirms that, with the same seed and telemetry count, the generator produces equivalent artifacts. The check is intentionally local and deterministic for the synthetic dataset.
+
+## Known Limitations
+
+- The project is a synthetic demonstration and does not ingest real plant data.
+- The anomaly rules are illustrative and not validated against operational safety thresholds.
+- The pump simulation is a simplified affinity-law approximation; it does not solve a full hydraulic network.
+- The leak and blockage detection logic produces proxy-level conclusions when the data only supports aggregate facility-level signals.
+- SQLite is suitable for a local demo but is not a production-grade industrial historian or enterprise database.
 
 ## Responsible Use
 
-IndustrialPulse AI is intended for:
+IndustrialPulse AI should be used as a learning, validation, and demonstration tool. It is not a certified industrial control system and should not be treated as a replacement for operational monitoring, safety instrumentation, or engineering review.
 
-- Educational exploration
-- Synthetic data generation
-- Software engineering demonstrations
-- Testing anomaly-detection concepts
-- Experimenting with basic industrial data validation
-- Demonstrating a lightweight API and simulation workflow
-
-It must not be used as the sole basis for:
-
-- Industrial safety decisions
-- Real equipment control
-- Emergency response
-- Maintenance decisions requiring validated diagnostic evidence
-- Claims of production-grade digital-twin accuracy
-
-Any real-world application would require domain-expert review, appropriate engineering validation, representative data, cybersecurity assessment, and safety analysis.
-
----
-
-## Author
-
-**Ajay Kuraparthi**
-
-GitHub: https://github.com/ajaykuraparthi
-
-**Project:** IndustrialPulse AI
-
-**Purpose:** Synthetic industrial monitoring, anomaly detection, validation, and operational simulation MVP.
-
----
+The repository documentation in [docs/architecture.md](docs/architecture.md), [docs/data_dictionary.md](docs/data_dictionary.md), and [docs/simulation_assumptions.md](docs/simulation_assumptions.md) should be treated as the authoritative local explanation of the implemented behavior.
 
 ## Final Note
 
-IndustrialPulse AI demonstrates an initial software architecture for representing synthetic industrial assets, generating telemetry, validating selected data relationships, applying explainable anomaly-detection rules, and exposing functionality through an API.
-
-Its results should be interpreted according to the implemented logic, synthetic data assumptions, and measured test coverage.
+This repository is strongest as a compact, explainable, end-to-end synthetic industrial monitoring prototype. It demonstrates how deterministic data generation, explicit validation, transparent anomaly checks, and a local API/dashboard workflow can be combined into a practical engineering MVP without introducing unnecessary infrastructure complexity.
