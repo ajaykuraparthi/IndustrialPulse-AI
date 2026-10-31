@@ -617,21 +617,16 @@ Run tests from the repository root with the virtual environment activated:
 python -m pytest -q
 ```
 
-During development, the existing test suite reported:
-
-```text
-3 passed
-```
-
-This is a previously observed development result, not a guarantee that tests will pass in every environment or future revision.
-
 ### Current Test Coverage
 
-The initial test suite covers selected behavior, including:
+The automated suite covers selected behavior, including:
 
-- Basic synthetic dataset generation
+- Synthetic dataset generation and data relationships
 - Separation of ground-truth artifacts from detector features
-- A sensor-fault detection rule
+- Sensor-fault, pump-degradation, negative-reading, facility-flow-proxy, and sustained-pressure rules
+- Exclusion of suspect readings from process alarms
+- Malformed telemetry handling
+- Exact sensor-target and facility-proxy scenario matching
 
 ### Additional Recommended Tests
 
@@ -639,13 +634,9 @@ Further tests should cover:
 
 - Invalid equipment references
 - Invalid tank-level conditions
-- Pump-degradation scenarios
-- Leak and blockage detection behavior
-- False-positive and false-negative cases
 - Invalid simulation requests
 - Valid simulation requests
 - Database persistence
-- Reproducibility of generated artifacts
 - Boundary values for telemetry and simulation inputs
 
 The project should not be considered fully validated until the additional relevant behaviors have been tested.
