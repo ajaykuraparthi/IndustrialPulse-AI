@@ -336,10 +336,9 @@ def dashboard():
           }
         });
 
-        loadSummary();
         loadTelemetry();
-        loadAlarms();
         loadSimulations();
+        loadAlarms().then(loadSummary);
       </script>
     </body>
     </html>""")
