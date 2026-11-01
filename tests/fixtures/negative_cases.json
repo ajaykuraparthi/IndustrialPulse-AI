@@ -1,0 +1,41 @@
+{
+  "missing_pipe_node": {
+    "pipe_id": "PIPE-NEG-001",
+    "from_node_id": "PUMP-MISSING",
+    "expected_error": "missing topology node"
+  },
+  "tank_over_capacity": {
+    "tank_id": "TANK-001",
+    "initial_volume_liters": 999999999,
+    "expected_error": "initial volume exceeds capacity"
+  },
+  "flow_balance_violation": {
+    "facility_id": "FAC-001",
+    "inlet_flows_lps": [100.0],
+    "outlet_flows_lps": [1.0],
+    "tank_volume_change_liters": 0.0,
+    "interval_seconds": 1.0,
+    "expected_error": "exceeds"
+  },
+  "simulation_missing_configuration": {
+    "simulation_run_id": "SIM-NEG-001",
+    "facility_id": "FAC-001",
+    "pump_id": "PUMP-001",
+    "config_json": null,
+    "seed": 20261022,
+    "status": "completed",
+    "output_json": {"predicted_flow_lps": 50.0},
+    "expected_error": "simulation_missing_configuration"
+  },
+  "sensor_fault_mislabeled_as_process_fault": {
+    "sensor_id": "SNS-001",
+    "component_id": "PUMP-001",
+    "facility_id": "FAC-001",
+    "sensor_type": "flow",
+    "measurement_role": "inlet",
+    "quality_status": "good",
+    "value": 0.0,
+    "repeat_count": 12,
+    "expected_classification": "sensor_fault_only"
+  }
+}

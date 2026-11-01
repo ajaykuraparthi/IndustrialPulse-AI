@@ -1,19 +1,42 @@
 from __future__ import annotations
-import json, sqlite3, hashlib
+import json, sqlite3, hashlib, uuid
 from pathlib import Path
 from datetime import datetime, timezone
+import math
 import pandas as pd
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from .generator import generate_dataset
 from .engine import detect_anomalies
-from .validation import validate_dataset
+from .validation import validate_dataset, validate_simulation_record
 
 DATA = Path("data/generated")
 DB = Path("industrialpulse.db")
 app = FastAPI(title="IndustrialPulse AI", version="0.1.0",
               description="Synthetic industrial monitoring and simulation MVP")
+
+
+def _json_safe(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    request: Request, error: RequestValidationError
+):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _json_safe(error.errors())},
+    )
+
 
 def ensure_data():
     if not (DATA/"telemetry.csv").exists():
@@ -22,23 +45,120 @@ def ensure_data():
 def db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("""CREATE TABLE IF NOT EXISTS facilities (
+      facility_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('active', 'inactive')))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS pumps (
+      pump_id TEXT PRIMARY KEY, facility_id TEXT NOT NULL REFERENCES facilities(facility_id),
+      nominal_flow_lps REAL NOT NULL CHECK(nominal_flow_lps > 0),
+      shutoff_head_kpa REAL NOT NULL CHECK(shutoff_head_kpa > 0),
+      curve_k REAL NOT NULL CHECK(curve_k > 0),
+      status TEXT NOT NULL CHECK(status IN ('active', 'inactive')),
+      UNIQUE(pump_id, facility_id))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS components (
+      component_id TEXT PRIMARY KEY, facility_id TEXT NOT NULL REFERENCES facilities(facility_id),
+      component_type TEXT NOT NULL,
+      UNIQUE(component_id, facility_id))""")
+
+    if (DATA / "facilities.csv").is_file() and (DATA / "pumps.csv").is_file():
+        facilities = pd.read_csv(DATA / "facilities.csv")
+        for row in facilities.to_dict(orient="records"):
+            conn.execute(
+                "INSERT OR IGNORE INTO facilities VALUES (?, ?, ?)",
+                (row["facility_id"], row["name"], row["status"]),
+            )
+        pumps = pd.read_csv(DATA / "pumps.csv")
+        for row in pumps.to_dict(orient="records"):
+            conn.execute(
+                "INSERT OR IGNORE INTO pumps VALUES (?, ?, ?, ?, ?, ?)",
+                (row["pump_id"], row["facility_id"], row["nominal_flow_lps"],
+                 row["shutoff_head_kpa"], row["curve_k"], row["status"]),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO components VALUES (?, ?, 'pump')",
+                (row["pump_id"], row["facility_id"]),
+            )
+        conn.executemany(
+            "INSERT OR IGNORE INTO components VALUES (?, ?, 'facility')",
+            [(row["facility_id"], row["facility_id"]) for row in facilities.to_dict(orient="records")],
+        )
+        for filename, id_column, kind in (
+            ("tanks.csv", "tank_id", "tank"),
+            ("valves.csv", "valve_id", "valve"),
+            ("pipes.csv", "pipe_id", "pipe"),
+        ):
+            path = DATA / filename
+            if path.is_file():
+                frame = pd.read_csv(path)
+                conn.executemany(
+                    "INSERT OR IGNORE INTO components VALUES (?, ?, ?)",
+                    [(row[id_column], row["facility_id"], kind)
+                     for row in frame.to_dict(orient="records")],
+                )
+
+    existing_tables = {
+        row["name"] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if "simulation_runs" in existing_tables:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(simulation_runs)")
+        }
+        if "pump_id" not in columns:
+            conn.execute("ALTER TABLE simulation_runs ADD COLUMN pump_id TEXT")
+            for row in conn.execute(
+                "SELECT simulation_run_id, config_json FROM simulation_runs"
+            ).fetchall():
+                try:
+                    pump_id = json.loads(row["config_json"]).get("pump_id")
+                except (TypeError, json.JSONDecodeError):
+                    pump_id = None
+                conn.execute(
+                    "UPDATE simulation_runs SET pump_id = ? WHERE simulation_run_id = ?",
+                    (pump_id, row["simulation_run_id"]),
+                )
     conn.execute("""CREATE TABLE IF NOT EXISTS simulation_runs (
       simulation_run_id TEXT PRIMARY KEY, facility_id TEXT NOT NULL,
-      config_json TEXT NOT NULL, configuration_hash TEXT NOT NULL,
-      seed INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
-      output_json TEXT NOT NULL)""")
+      pump_id TEXT NOT NULL,
+      config_json TEXT NOT NULL CHECK(
+        json_valid(config_json) AND json_type(config_json) = 'object'
+        AND json_extract(config_json, '$.simulation_run_id') IS NOT NULL
+        AND json_extract(config_json, '$.simulation_run_id') = simulation_run_id
+        AND json_extract(config_json, '$.pump_id') IS NOT NULL
+        AND json_extract(config_json, '$.pump_id') = pump_id
+        AND json_extract(config_json, '$.seed') IS NOT NULL
+        AND CAST(json_extract(config_json, '$.seed') AS INTEGER) = seed
+        AND json_extract(config_json, '$.assumptions') IS NOT NULL
+        AND length(trim(json_extract(config_json, '$.assumptions'))) > 0
+        AND json_extract(config_json, '$.model_version') IS NOT NULL
+        AND length(trim(json_extract(config_json, '$.model_version'))) > 0
+        AND json_extract(config_json, '$.speed_pct') BETWEEN 10 AND 120),
+      configuration_hash TEXT NOT NULL CHECK(length(configuration_hash) = 64),
+      seed INTEGER NOT NULL CHECK(seed >= 0),
+      status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+      created_at TEXT NOT NULL,
+      output_json TEXT NOT NULL CHECK(
+        json_valid(output_json) AND json_type(output_json) = 'object'
+        AND json_extract(output_json, '$.predicted_flow_lps') IS NOT NULL
+        AND json_extract(output_json, '$.predicted_head_kpa') IS NOT NULL),
+      FOREIGN KEY(facility_id) REFERENCES facilities(facility_id),
+      FOREIGN KEY(pump_id, facility_id) REFERENCES pumps(pump_id, facility_id))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS alarms (
-      alarm_id TEXT PRIMARY KEY, simulation_run_id TEXT,
-      component_id TEXT NOT NULL, alarm_type TEXT NOT NULL, severity TEXT NOT NULL,
+      alarm_id TEXT PRIMARY KEY,
+      simulation_run_id TEXT REFERENCES simulation_runs(simulation_run_id),
+      component_id TEXT NOT NULL REFERENCES components(component_id),
+      alarm_type TEXT NOT NULL, severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high', 'critical')),
       rule_id TEXT NOT NULL, observed_value REAL, expected_value TEXT,
       explanation TEXT NOT NULL, created_at TEXT NOT NULL)""")
     conn.commit()
     return conn
 
 class SimulationRequest(BaseModel):
-    pump_id: str
-    speed_pct: float = Field(ge=10, le=120)
-    seed: int = 20261022
+    pump_id: str = Field(min_length=1, pattern=r"^\S+$")
+    speed_pct: float = Field(ge=10, le=120, allow_inf_nan=False)
+    seed: int = Field(default=20261022, ge=0)
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
@@ -392,21 +512,42 @@ def create_simulation(req: SimulationRequest):
     # Affinity-law approximation; real network operating point is not solved here.
     predicted_flow = float(pump.nominal_flow_lps * ratio)
     predicted_head = float(pump.shutoff_head_kpa * ratio**2)
-    config = {"pump_id":req.pump_id,"speed_pct":req.speed_pct,"seed":req.seed,
-              "model_version":"0.1.0","assumptions":"pump affinity-law approximation"}
+    sim_id = f"SIM-{uuid.uuid4().hex}"
+    config = {
+        "simulation_run_id": sim_id,
+        "pump_id": req.pump_id,
+        "speed_pct": req.speed_pct,
+        "seed": req.seed,
+        "model_version": "0.1.0",
+        "assumptions": "pump affinity-law approximation; network operating point not solved",
+    }
     config_json = json.dumps(config,sort_keys=True)
     config_hash = hashlib.sha256(config_json.encode()).hexdigest()
-    sim_id = f"SIM-2026-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
     output = {"predicted_flow_lps":round(predicted_flow,3),
               "predicted_head_kpa":round(predicted_head,3),
               "baseline_flow_lps":float(pump.nominal_flow_lps),
               "flow_change_pct":round((ratio-1)*100,2),
               "note":"Simplified pump affinity-law estimate; not a hydraulic network solution."}
+    validate_simulation_record({
+        "simulation_run_id": sim_id,
+        "facility_id": pump.facility_id,
+        "pump_id": req.pump_id,
+        "config_json": config,
+        "configuration_hash": config_hash,
+        "seed": req.seed,
+        "status": "completed",
+        "output_json": output,
+    })
     conn = db()
-    conn.execute("""INSERT INTO simulation_runs VALUES (?,?,?,?,?,?,?,?)""",
-      (sim_id,pump.facility_id,config_json,config_hash,req.seed,"completed",
-       datetime.now(timezone.utc).isoformat(),json.dumps(output)))
-    conn.commit(); conn.close()
+    try:
+        conn.execute("""INSERT INTO simulation_runs
+          (simulation_run_id, facility_id, pump_id, config_json, configuration_hash,
+           seed, status, created_at, output_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+          (sim_id,pump.facility_id,req.pump_id,config_json,config_hash,req.seed,"completed",
+           datetime.now(timezone.utc).isoformat(),json.dumps(output,sort_keys=True)))
+        conn.commit()
+    finally:
+        conn.close()
     return {"simulation_run_id":sim_id,"configuration":config,"configuration_hash":config_hash,
             "status":"completed","output":output}
 

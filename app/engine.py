@@ -37,6 +37,22 @@ def _time_fields(group: pd.DataFrame, start: int, end: int) -> dict:
     }
 
 
+def _exclude_sensor_fault_readings(
+    frame: pd.DataFrame,
+    fault_windows: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]],
+) -> pd.DataFrame:
+    if frame.empty or not fault_windows:
+        return frame
+    excluded = pd.Series(False, index=frame.index)
+    for sensor_id, windows in fault_windows.items():
+        sensor_rows = frame["sensor_id"] == sensor_id
+        for start, end in windows:
+            excluded |= sensor_rows & frame["timestamp"].between(
+                start, end, inclusive="both"
+            )
+    return frame[~excluded]
+
+
 def _prepare_telemetry(telemetry: pd.DataFrame) -> pd.DataFrame:
     missing = REQUIRED_TELEMETRY_COLUMNS - set(telemetry.columns)
     if missing:
@@ -80,6 +96,7 @@ def detect_anomalies(telemetry: pd.DataFrame, pumps: pd.DataFrame) -> list[dict]
 
     work = _prepare_telemetry(telemetry)
     alarms: list[dict] = []
+    sensor_fault_windows: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] = {}
 
     # Sensor quality checks; sensor_id identifies the instrument, component_id its target.
     for sensor_id, group in work.groupby("sensor_id", sort=True):
@@ -94,6 +111,9 @@ def detect_anomalies(telemetry: pd.DataFrame, pumps: pd.DataFrame) -> list[dict]
         stuck_mask = run_lengths >= STUCK_READING_MIN_RUN
 
         for start, end in _true_runs(stuck_mask):
+            sensor_fault_windows.setdefault(sensor_id, []).append(
+                (group["timestamp"].iloc[start], group["timestamp"].iloc[end])
+            )
             alarms.append({
                 "component_id": component_id,
                 "sensor_id": sensor_id,
@@ -113,6 +133,9 @@ def detect_anomalies(telemetry: pd.DataFrame, pumps: pd.DataFrame) -> list[dict]
         if stype in ("flow", "pressure", "level") and negative.any():
             positions = np.flatnonzero(negative.to_numpy())
             start, end = int(positions[0]), int(positions[-1])
+            sensor_fault_windows.setdefault(sensor_id, []).append(
+                (group["timestamp"].iloc[start], group["timestamp"].iloc[end])
+            )
             alarms.append({
                 "component_id": component_id,
                 "sensor_id": sensor_id,
@@ -132,6 +155,7 @@ def detect_anomalies(telemetry: pd.DataFrame, pumps: pd.DataFrame) -> list[dict]
     pressure = work[work["sensor_type"] == "pressure"]
     if "quality_status" in pressure.columns:
         pressure = pressure[pressure["quality_status"] == "good"]
+    pressure = _exclude_sensor_fault_readings(pressure, sensor_fault_windows)
     for sensor_id, group in pressure.groupby("sensor_id", sort=True):
         values = group["value"]
         if len(values) <= PRESSURE_BASELINE_READINGS:
@@ -178,6 +202,7 @@ def detect_anomalies(telemetry: pd.DataFrame, pumps: pd.DataFrame) -> list[dict]
     flow = work[work["sensor_type"] == "flow"]
     if "quality_status" in flow.columns:
         flow = flow[flow["quality_status"] == "good"]
+    flow = _exclude_sensor_fault_readings(flow, sensor_fault_windows)
     pump_facility = dict(zip(flow["component_id"], flow["facility_id"]))
     # Nominal pump flow is an independent reference, so a degradation event
     # cannot pull its own baseline down as the event continues.

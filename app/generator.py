@@ -1,16 +1,23 @@
 """Deterministic synthetic data generation for IndustrialPulse AI."""
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import networkx as nx
 
 ID = lambda prefix, n, width=3: f"{prefix}-{n:0{width}d}"
 
 def generate_dataset(output_dir="data/generated", seed=20261022, telemetry_count=100000):
+    if not isinstance(seed, (int, np.integer)) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
+    if not isinstance(telemetry_count, (int, np.integer)) or telemetry_count < 0:
+        raise ValueError("telemetry_count must be a non-negative integer")
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    legacy_negative_cases = out / "negative_cases.json"
+    if legacy_negative_cases.is_file():
+        legacy_negative_cases.unlink()
     rng = np.random.default_rng(seed)
 
     facilities = pd.DataFrame([
@@ -79,6 +86,69 @@ def generate_dataset(output_dir="data/generated", seed=20261022, telemetry_count
          "effective_to": None, "status": "active"} for i in range(1, 4)
     ])
 
+    # These are modeled steady-state operating points, not sampled telemetry.
+    # The common throughput is limited by the smaller aggregate pump capacity.
+    flow_balances = []
+    flow_sensors = sensors[sensors["sensor_type"] == "flow"]
+    for _, facility in facilities.iterrows():
+        facility_id = facility["facility_id"]
+        facility_pumps = pumps[pumps["facility_id"] == facility_id].merge(
+            flow_sensors[["component_id", "measurement_role"]],
+            left_on="pump_id",
+            right_on="component_id",
+        )
+        role_pumps = {
+            role: [
+                {
+                    "pump_id": row["pump_id"],
+                    "nominal_flow_lps": float(row["nominal_flow_lps"]),
+                }
+                for _, row in facility_pumps[
+                    facility_pumps["measurement_role"] == role
+                ].iterrows()
+            ]
+            for role in ("inlet", "outlet")
+        }
+        capacities = {
+            role: sum(pump["nominal_flow_lps"] for pump in role_pumps[role])
+            for role in role_pumps
+        }
+        for point_index, demand_factor in enumerate((0.5, 0.75, 1.0), start=1):
+            throughput_lps = min(capacities.values()) * demand_factor
+            inlet_flows = [
+                round(
+                    throughput_lps * pump["nominal_flow_lps"] / capacities["inlet"],
+                    6,
+                )
+                for pump in role_pumps["inlet"]
+            ]
+            outlet_flows = [
+                round(
+                    throughput_lps * pump["nominal_flow_lps"] / capacities["outlet"],
+                    6,
+                )
+                for pump in role_pumps["outlet"]
+            ]
+            interval_start = (
+                pd.Timestamp("2026-10-22T00:00:00Z")
+                + pd.Timedelta(seconds=(point_index - 1) * 60)
+            )
+            flow_balances.append({
+                "balance_id": f"BAL-{facility_id}-{point_index:02d}",
+                "facility_id": facility_id,
+                "interval_start": interval_start.isoformat(),
+                "interval_seconds": 60,
+                "measurement_basis": "modeled",
+                "model_name": "steady_state_bottlenecked_nominal_capacity",
+                "demand_factor": demand_factor,
+                "source_pump_capacities_json": json.dumps(
+                    role_pumps, separators=(",", ":"), sort_keys=True
+                ),
+                "inlet_flows_lps": json.dumps(inlet_flows, separators=(",", ":")),
+                "outlet_flows_lps": json.dumps(outlet_flows, separators=(",", ":")),
+                "tank_volume_change_liters": 0.0,
+            })
+
     # Generate telemetry in chunks so full-volume generation does not require huge intermediate arrays.
     sensor_indices = rng.integers(0, len(sensors), size=telemetry_count)
     offsets = np.arange(telemetry_count)
@@ -93,20 +163,40 @@ def generate_dataset(output_dir="data/generated", seed=20261022, telemetry_count
         {"scenario_id":"SCN-000003","issue_type":"leak","component_id":"FAC-001","start_index":1500,"end_index":1699,"expected_decision":"investigate_flow_imbalance"},
         {"scenario_id":"SCN-000004","issue_type":"blockage","component_id":"PIPE-001","start_index":2000,"end_index":2199,"expected_decision":"inspect_pressure_drop"}
     ]
+    scenario_specs = [
+        spec for spec in scenario_specs if spec["end_index"] <= telemetry_count
+    ]
     pump_map = pumps.set_index("pump_id").to_dict("index")
-    sensor_map = sensors.set_index("sensor_id").to_dict("index")
     for idx in range(telemetry_count):
         # Ensure each labelled scenario actually affects its intended measurement stream.
         forced_sensor_id = None
-        if 500 <= idx < 700:
-            forced_sensor_id = sensors.loc[sensors["component_id"] == "PUMP-003", "sensor_id"].iloc[0]
-        elif 1000 <= idx < 1100:
-            forced_sensor_id = "SNS-001"
-        elif 1500 <= idx < 1700:
-            candidates = sensors[(sensors["facility_id"] == "FAC-001") & (sensors["sensor_type"] == "flow")]
-            forced_sensor_id = candidates["sensor_id"].iloc[(idx - 1500) % len(candidates)]
-        elif 2000 <= idx < 2200:
-            candidates = sensors[(sensors["facility_id"] == "FAC-001") & (sensors["sensor_type"] == "pressure")]
+        active_spec = next(
+            (spec for spec in scenario_specs
+             if spec["start_index"] <= idx < spec["end_index"]),
+            None,
+        )
+        if active_spec and active_spec["issue_type"] in ("pump_degradation", "sensor_fault"):
+            target_id = active_spec["component_id"]
+            if active_spec["issue_type"] == "pump_degradation":
+                target_sensor = sensors[sensors["component_id"] == target_id]
+            else:
+                target_sensor = sensors[sensors["sensor_id"] == target_id]
+            forced_sensor_id = target_sensor["sensor_id"].iloc[0]
+        elif active_spec and active_spec["issue_type"] == "leak":
+            facility_id = active_spec["component_id"]
+            candidates = sensors[
+                (sensors["facility_id"] == facility_id)
+                & (sensors["sensor_type"] == "flow")
+            ]
+            forced_sensor_id = candidates["sensor_id"].iloc[
+                (idx - active_spec["start_index"]) % len(candidates)
+            ]
+        elif active_spec and active_spec["issue_type"] == "blockage":
+            pipe = pipes[pipes["pipe_id"] == active_spec["component_id"]].iloc[0]
+            candidates = sensors[
+                (sensors["facility_id"] == pipe["facility_id"])
+                & (sensors["sensor_type"] == "pressure")
+            ]
             forced_sensor_id = candidates["sensor_id"].iloc[0]
         if forced_sensor_id is not None:
             sensor = sensors[sensors["sensor_id"] == forced_sensor_id].iloc[0]
@@ -153,21 +243,39 @@ def generate_dataset(output_dir="data/generated", seed=20261022, telemetry_count
     for spec in scenario_specs:
         truth.append({**spec, "ground_truth": "abnormal",
                       "label_source": "documented deterministic injection rule"})
-    negative_cases = {
-        "invalid_pipe_reference": {"pipe_id":"PIPE-NEG-001","from_node_id":"PUMP-MISSING","to_node_id":"TANK-001","expected_validation":"missing_node"},
-        "tank_over_capacity": {"tank_id":"TANK-001","level_liters":999999999,"expected_validation":"capacity_exceeded"},
-        "flow_balance_violation": {"facility_id":"FAC-001","residual_lps":99.0,"tolerance_lps":8.0,"expected_validation":"balance_violation"},
-        "simulation_missing_configuration": {"simulation_run_id":"SIM-NEG-001","configuration":None,"expected_validation":"missing_configuration"},
-        "sensor_fault_mislabeled_as_process_fault": {"sensor_id":"SNS-001","sensor_fault":True,"expected_process_label":"unknown_until_independently_confirmed","expected_validation":"label_conflict"}
-    }
-
     tables = {"facilities":facilities,"pumps":pumps,"tanks":tanks,"valves":valves,
               "pipes":pipes,"sensors":sensors,"operating_modes":modes,"telemetry":telemetry}
     for name, df in tables.items():
         df.to_csv(out / f"{name}.csv", index=False)
-    (out / "ground_truth.json").write_text(json.dumps(truth, indent=2))
-    (out / "negative_cases.json").write_text(json.dumps(negative_cases, indent=2))
-    manifest = {"seed":seed,"telemetry_count":telemetry_count,"generator":"app.generator.generate_dataset",
-                "synthetic_only":True,"generated_at":"deterministic content; wall-clock time intentionally omitted"}
-    (out / "source_manifest.json").write_text(json.dumps(manifest, indent=2))
+    pd.DataFrame(flow_balances).to_csv(out / "flow_balances.csv", index=False)
+    (out / "ground_truth.json").write_text(
+        json.dumps(truth, indent=2), encoding="utf-8"
+    )
+    from .validation import validate_dataset
+
+    validation_summary = validate_dataset(out)
+    (out / "validation_summary.json").write_text(
+        json.dumps(validation_summary, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    artifact_paths = [
+        *(out / f"{name}.csv" for name in tables),
+        out / "flow_balances.csv",
+        out / "ground_truth.json",
+        out / "validation_summary.json",
+    ]
+    source_files = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in artifact_paths
+    }
+    manifest = {
+        "seed": int(seed),
+        "telemetry_count": int(telemetry_count),
+        "generator": "app.generator.generate_dataset",
+        "synthetic_only": True,
+        "provenance": "Generated locally by this repository; no external or operational plant data used.",
+        "artifacts_sha256": source_files,
+    }
+    (out / "source_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
     return {name: len(df) for name, df in tables.items()}

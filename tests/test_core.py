@@ -18,11 +18,13 @@ def test_generator_counts_and_relationships(tmp_path):
     assert result["valid"], result["errors"]
 
 def test_ground_truth_is_separate(tmp_path):
-    generate_dataset(tmp_path,seed=20261022,telemetry_count=300)
+    generate_dataset(tmp_path,seed=20261022,telemetry_count=2500)
     truth=json.loads((tmp_path/"ground_truth.json").read_text())
     telemetry=pd.read_csv(tmp_path/"telemetry.csv")
-    assert len(truth) >= 4
+    assert len(truth) == 4
+    assert all(scenario["end_index"] <= len(telemetry) for scenario in truth)
     assert "ground_truth" not in telemetry.columns
+    assert not (tmp_path/"negative_cases.json").exists()
 
 def test_detector_sensor_fault_rule():
     timestamps = pd.date_range(
