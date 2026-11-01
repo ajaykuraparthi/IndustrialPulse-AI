@@ -2,7 +2,7 @@
 
 **A local industrial-monitoring prototype for synthetic telemetry, explainable anomaly detection, and traceable simulation workflows.**
 
-**Status:** Prototype / demo  
+
 **Stack:** Python · FastAPI · SQLite · Pandas · NumPy · NetworkX · pytest
 
 > IndustrialPulse AI demonstrates a compact end-to-end monitoring workflow using synthetic industrial data. It is intended for learning, evaluation, and reproducible experimentation—not for live plant operations or safety-critical decisions.
